@@ -7,10 +7,12 @@
 <style>
 *{box-sizing:border-box}body{margin:0;background:#102b19;color:white;font-family:Arial,sans-serif;text-align:center}
 h1{margin:12px 0 6px;font-size:clamp(20px,4vw,32px)}
-#menu{background:rgba(0,0,0,0.85);position:fixed;top:0;left:0;width:100%;height:100%;display:flex;flex-direction:column;justify-content:center;align-items:center;z-index:10;gap:12px;padding:20px}
+#menu, #skill-menu{background:rgba(0,0,0,0.85);position:fixed;top:0;left:0;width:100%;height:100%;display:flex;flex-direction:column;justify-content:center;align-items:center;z-index:10;gap:12px;padding:20px}
+#skill-menu{display:none}
 .menu-box{background:#185d2b;padding:25px;border-radius:12px;border:3px solid white;max-width:420px;width:100%;display:flex;flex-direction:column;gap:10px}
 #painel{display:flex;gap:8px;justify-content:center;align-items:center;flex-wrap:wrap;margin:8px;display:none}
 button,input,select{padding:10px 13px;border:0;border-radius:8px;font-size:15px}button{background:#249341;color:white;font-weight:bold;cursor:pointer}input,select{width:100%;background:white;color:#333;text-align:center}
+.skill-btn{background:#1f4e79;margin-top:5px}
 #status{min-height:24px;color:#ffe94d}canvas{display:block;width:min(96vw,1200px);height:auto;margin:8px auto;border:3px solid white;border-radius:8px;background:#218447;touch-action:none}
 #controls{margin:8px auto 16px;max-width:1100px;padding:0 10px;color:#ddd;font-size:14px;line-height:1.6}
 </style></head><body>
@@ -28,17 +30,23 @@ button,input,select{padding:10px 13px;border:0;border-radius:8px;font-size:15px}
     </select>
 
     <div style="border-top:1px solid rgba(255,255,255,0.2);margin:4px 0"></div>
-    
     <input id="create-room-code" placeholder="Código para sua Sala (ex: sala123)">
     <button id="btn-host">CRIAR SALA ONLINE</button>
-    
     <div style="font-size:13px;color:#ddd">OU</div>
-    
     <input id="join-room-code" placeholder="Código da Sala para Entrar">
     <button id="btn-join">ENTRAR NA SALA</button>
-    
     <div style="border-top:1px solid rgba(255,255,255,0.2);margin:4px 0"></div>
     <button id="btn-local" style="background:#b87d00">JOGAR NO MESMO PC (2 PLAYERS)</button>
+  </div>
+</div>
+
+<div id="skill-menu">
+  <div class="menu-box">
+    <h2>⚡ ESCOLHA SUA HABILIDADE (Botão F)</h2>
+    <button class="skill-btn" onclick="selectSkill('dash')">Dash (Impulso + Velocidade)</button>
+    <button class="skill-btn" onclick="selectSkill('congelar')">Congelar (Para a bola por 2s)</button>
+    <button class="skill-btn" onclick="selectSkill('goleiro')">Virar Goleiro (Teleporte + Gigante)</button>
+    <button style="background:#b87d00;margin-top:10px" onclick="selectSkill('random')">🎲 Escolher Aleatório</button>
   </div>
 </div>
 
@@ -50,7 +58,7 @@ button,input,select{padding:10px 13px;border:0;border-radius:8px;font-size:15px}
 <div id="status">Aguardando configuração inicial…</div>
 <canvas id="game" width="1000" height="700"></canvas>
 <div id="controls">
-<b>CONTROLES:</b> WASD para mover · E para carregar e soltar chute · Q para drible · Shift para correr
+<b>CONTROLES:</b> WASD para mover · E para carregar chute · Q para drible · Shift para correr · F para Habilidade
 </div>
 <script>
 const c=document.getElementById('game'),ctx=c.getContext('2d'),statusEl=document.getElementById('status');
@@ -80,8 +88,7 @@ function fresh(){
       x: isGoalie ? 60 : 300 + (i*40),
       y: 340 + (i*50 - 25),
       vx:0, vy:0, color:'#286eff', dir:1, dribble:0, dribbleCD:0, sprint:0, sprintCD:0,
-      nick: 'Azul ' + (i+1),
-      team: 0, goalie: isGoalie
+      nick: 'Azul ' + (i+1), team: 0, goalie: isGoalie, skill: 'dash', skillCD: 0, skillActive: 0, size: 15
     });
     charge.push(0);
   }
@@ -92,13 +99,12 @@ function fresh(){
       x: isGoalie ? W-60 : W-300 - (i*40),
       y: 340 + (i*50 - 25),
       vx:0, vy:0, color:'#f53737', dir:-1, dribble:0, dribbleCD:0, sprint:0, sprintCD:0,
-      nick: 'Vermelho ' + (i+1),
-      team: 1, goalie: isGoalie
+      nick: 'Vermelho ' + (i+1), team: 1, goalie: isGoalie, skill: 'dash', skillCD: 0, skillActive: 0, size: 15
     });
     charge.push(0);
   }
 
-  ball={x:W/2,y:H/2,vx:0,vy:0,owner:-1,protect:0,shot:false};
+  ball={x:W/2,y:H/2,vx:0,vy:0,owner:-1,protect:0,shot:false,frozen:0};
 }
 
 function say(s){statusEl.textContent=s}
@@ -118,12 +124,14 @@ function setupPeer(customId){
     let assignedIndex = connections.length;
     
     connection.on('open',()=>{
-      connection.send({type:'assign', index: assignedIndex, totalPlayers: totalPlayers, nicks: players.map(p=>p.nick)});
+      connection.send({type:'assign', index: assignedIndex, totalPlayers: totalPlayers});
     });
 
     connection.on('data',data=>{
       if(data.type==='input'){
         remoteInputs[assignedIndex] = data.keys || {};
+      } else if(data.type==='skill'){
+        if(players[assignedIndex]) players[assignedIndex].skill = data.skill;
       }
     });
 
@@ -149,25 +157,47 @@ function connectToHost(id){
     let conn = peer.connect(id, {reliable:true});
     conn.on('open',()=>{
       connected=true;
-      say('Conectado à sala! Aguardando início...');
+      say('Conectado à sala! Escolha sua habilidade...');
+      document.getElementById('skill-menu').style.display='flex';
     });
     conn.on('data',data=>{
       if(data.type==='assign'){
         myPlayerIndex = data.index;
         totalPlayers = data.totalPlayers;
         updateCanvasSize();
-        say('Você entrou! Seu boneco é o índice ' + myPlayerIndex);
       } else if(data.type==='state'){
         applyState(data.state);
       }
     });
     
+    window.activeConn = conn;
     setInterval(()=>{
       if(conn && conn.open){
         conn.send({type:'input', keys: keys});
       }
     }, 33);
   });
+}
+
+function selectSkill(skillName){
+  if(skillName === 'random'){
+    const skills = ['dash', 'congelar', 'goleiro'];
+    skillName = skills[Math.floor(Math.random() * skills.length)];
+  }
+  
+  if(role==='host' || isLocal){
+    players[myPlayerIndex].skill = skillName;
+  } else if(window.activeConn && window.activeConn.open){
+    window.activeConn.send({type:'skill', skill: skillName});
+  }
+
+  document.getElementById('skill-menu').style.display='none';
+  if(role==='host' || isLocal){
+    document.getElementById('painel').style.display='flex';
+    say('Habilidade escolhida! Pressione INICIAR.');
+  } else {
+    say('Habilidade escolhida! Aguardando o anfitrião iniciar.');
+  }
 }
 
 document.getElementById('btn-host').onclick=()=>{
@@ -177,22 +207,23 @@ document.getElementById('btn-host').onclick=()=>{
   if(!customCode){alert('Digite um código para sua sala!');return}
   if(nick) myNick=nick;
   document.getElementById('menu').style.display='none';
-  document.getElementById('painel').style.display='flex';
   role='host';
   myPlayerIndex=0;
   fresh();
   players[0].nick = myNick;
   setupPeer(customCode);
+  document.getElementById('skill-menu').style.display='flex';
 };
 
 document.getElementById('btn-join').onclick=()=>{
   let id=document.getElementById('join-room-code').value.trim();
   let nick=document.getElementById('nickname').value.trim();
+  totalPlayers=parseInt(document.getElementById('max-players').value);
   if(!id){alert('Digite o código da sala para entrar!');return}
   if(nick) myNick=nick;
   document.getElementById('menu').style.display='none';
-  document.getElementById('painel').style.display='flex';
   role='join';
+  fresh();
   connectToHost(id);
 };
 
@@ -201,13 +232,13 @@ document.getElementById('btn-local').onclick=()=>{
   totalPlayers=parseInt(document.getElementById('max-players').value);
   if(nick) myNick=nick;
   document.getElementById('menu').style.display='none';
-  document.getElementById('painel').style.display='flex';
   isLocal=true;
   role='host';
   connected=true;
   fresh();
   players[0].nick = myNick;
-  say('Modo Local Ativado! Pressione INICIAR.');
+  setupPeer();
+  document.getElementById('skill-menu').style.display='flex';
 };
 
 document.getElementById('start').onclick=()=>{
@@ -217,7 +248,9 @@ document.getElementById('start').onclick=()=>{
 
 window.addEventListener('keydown',e=>{
   if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key))e.preventDefault();
-  keys[e.key.toLowerCase()]=true;
+  let k = e.key.toLowerCase();
+  keys[k]=true;
+  if(k === 'f') useSkill(myPlayerIndex);
 });
 
 window.addEventListener('keyup',e=>{
@@ -226,8 +259,28 @@ window.addEventListener('keyup',e=>{
 
 window.addEventListener('blur',()=>{keys={};});
 
+function useSkill(i){
+  let p = players[i];
+  let now = performance.now();
+  if(now < p.skillCD) return;
+
+  if(p.skill === 'dash'){
+    p.vx = p.dir * 14;
+    p.sprint = now + 4000;
+    p.skillCD = now + 4000;
+  } else if(p.skill === 'congelar'){
+    ball.frozen = now + 2000;
+    p.skillCD = now + 10000;
+  } else if(p.skill === 'goleiro'){
+    p.x = p.team === 0 ? 60 : W - 60;
+    p.y = H / 2;
+    p.skillActive = now + 2000;
+    p.skillCD = now + 10000;
+  }
+}
+
 function dribble(i){let p=players[i],now=performance.now();if(ball.owner!==i||now<p.dribbleCD)return;p.dribble=now+700;p.dribbleCD=now+3000;ball.protect=now+700;}
-function sprint(i){let p=players[i],now=performance.now();if(now<p.sprintCD)return;p.sprint=now+1000;p.sprintCD=now+4000;}
+function sprint(i){let p=players[i],now=performance.now();if(ball.owner===i || now<p.sprintCD)return;p.sprint=now+1000;p.sprintCD=now+4000;}
 function shoot(i,power){if(ball.owner!==i)return;let p=players[i],dx=(p.team===0?W:0)-ball.x,dy=(H/2)-ball.y,d=Math.hypot(dx,dy)||1;let f=9+Math.min(1,power/900)*13;ball.vx=dx/d*f;ball.vy=dy/d*f;ball.owner=-1;ball.shot=true;ball.protect=0;charge[i]=0;}
 
 function movePlayer(i,k,now,dt){
@@ -245,19 +298,18 @@ function movePlayer(i,k,now,dt){
   let d=Math.hypot(dx,dy);
   if(d){dx/=d;dy/=d;p.dir=dx?Math.sign(dx):p.dir}
 
-  if(p.goalie){
-    // Goleiro pode andar para qualquer direção dentro da sua área
-    let speed = now < p.sprint ? 6.8 : 4.1;
-    p.vx = dx * speed;
-    p.vy = dy * speed;
-    p.x = Math.max(30, Math.min(p.team === 0 ? 180 : W - 30, p.x + p.vx * dt * 60));
-    p.y = Math.max(120, Math.min(H - 140, p.y + p.vy * dt * 60));
-  } else {
-    let speed=now<p.sprint?6.8:4.1;
-    p.vx=dx*speed;p.vy=dy*speed;
-    p.x=Math.max(42,Math.min(W-42,p.x+p.vx*dt*60));
-    p.y=Math.max(105,Math.min(H-125,p.y+p.vy*dt*60));
-  }
+  let hasBall = (ball.owner === i);
+  let baseSpeed = hasBall ? 3.2 : 4.1; // Mais lento com a bola e não corre
+  let speed = now < p.sprint && !hasBall ? 6.8 : baseSpeed;
+
+  p.vx = dx * speed;
+  p.vy = dy * speed;
+
+  let limitSize = now < p.skillActive ? 30 : 15;
+  p.size = limitSize;
+
+  p.x = Math.max(42, Math.min(W-42, p.x + p.vx*dt*60));
+  p.y = Math.max(105, Math.min(H-125, p.y + p.vy*dt*60));
 }
 
 function update(dt,now){
@@ -277,27 +329,28 @@ function update(dt,now){
 
     movePlayer(i, activeKeys, now, dt);
 
-    let chargeKey = 'e';
-    let sprintKey = 'shift';
-    let dribbleKey = 'q';
+    if(activeKeys['q']) dribble(i);
+    if(activeKeys['shift']) sprint(i);
 
-    if(activeKeys[dribbleKey]) dribble(i);
-    if(activeKeys[sprintKey]) sprint(i);
-
-    if(activeKeys[chargeKey] && ball.owner===i){
+    if(activeKeys['e'] && ball.owner===i){
       charge[i]=Math.min(1000,charge[i]+dt*1000);
-    } else if(ball.owner===i && charge[i] > 0 && !activeKeys[chargeKey]){
+    } else if(ball.owner===i && charge[i] > 0 && !activeKeys['e']){
       shoot(i, charge[i]);
     }
   }
 
-  if(ball.owner>=0){
-    let p=players[ball.owner];
-    ball.x=p.x+p.dir*(now<p.dribble?34:23);
-    ball.y=p.y+5;
-  }else{
-    ball.x+=ball.vx*dt*60;ball.y+=ball.vy*dt*60;
-    ball.vx*=Math.pow(.988,dt*60);ball.vy*=Math.pow(.988,dt*60);
+  if(now < ball.frozen){
+    ball.vx = 0;
+    ball.vy = 0;
+  } else {
+    if(ball.owner>=0){
+      let p=players[ball.owner];
+      ball.x=p.x+p.dir*(now<p.dribble?34:23);
+      ball.y=p.y+5;
+    }else{
+      ball.x+=ball.vx*dt*60;ball.y+=ball.vy*dt*60;
+      ball.vx*=Math.pow(.988,dt*60);ball.vy*=Math.pow(.988,dt*60);
+    }
   }
 
   if(ball.x <= 25){ score[1]++; resetAfterGoal(now); return; }
@@ -305,10 +358,10 @@ function update(dt,now){
 
   if(ball.y<99||ball.y>H-119){ball.vy*=-.8;ball.y=Math.max(99,Math.min(H-119,ball.y))}
 
-  if(ball.owner<0){
+  if(ball.owner<0 && now >= ball.frozen){
     for(let i=0;i<players.length;i++){
       let p=players[i];
-      if(Math.hypot(ball.x-p.x,ball.y-p.y)<23){
+      if(Math.hypot(ball.x-p.x,ball.y-p.y)<(p.size+5)){
         let speed=Math.hypot(ball.vx,ball.vy);
         if(ball.shot&&speed>7){
           let dx=ball.x-p.x,dy=ball.y-p.y,d=Math.hypot(dx,dy)||1;
@@ -323,7 +376,7 @@ function update(dt,now){
 
   if(ball.owner>=0){
     let owner=players[ball.owner],opp=players.find(p=>p.team!==owner.team);
-    if(opp && Math.hypot(owner.x-opp.x,owner.y-opp.y)<25&&now>=ball.protect&&now>=owner.dribble){
+    if(opp && Math.hypot(owner.x-opp.x,owner.y-opp.y)<(owner.size+15)&&now>=ball.protect&&now>=owner.dribble){
       ball.owner=players.indexOf(opp);
       ball.protect=now+250;
     }
@@ -378,7 +431,67 @@ function draw(){
 
   for(let i=0;i<players.length;i++){
     let p=players[i];
-    ctx.fillStyle='#145022';ctx.beginPath();ctx.ellipse(p.x,p.y+8,14,5,0,0,Math.PI*2);ctx.fill();
-    ctx.fillStyle=performance.now()<p.dribble?p.color:'#ffffff';ctx.beginPath();ctx.arc(p.x,p.y,15,0,Math.PI*2);ctx.fill();
+    let r = p.size;
+    ctx.fillStyle='#145022';ctx.beginPath();ctx.ellipse(p.x,p.y+8,r-1,5,0,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle=performance.now()<p.dribble?p.color:'#ffffff';ctx.beginPath();ctx.arc(p.x,p.y,r,0,Math.PI*2);ctx.fill();
     ctx.strokeStyle=p.color;ctx.lineWidth=5;ctx.beginPath();
     ctx.moveTo(p.x-7,p.y+11);ctx.lineTo(p.x-12,p.y+22);
+    ctx.moveTo(p.x+7,p.y+11);ctx.lineTo(p.x+12,p.y+22);ctx.stroke();
+    ctx.fillStyle='#f0cda5';ctx.beginPath();ctx.arc(p.x,p.y-(r+4),8,0,Math.PI*2);ctx.fill();
+    
+    ctx.fillStyle='white';ctx.font='bold 12px Arial';ctx.textAlign='center';
+    let skillReady = performance.now() >= p.skillCD ? ' [F: PRONTA]' : ' [F: CD]';
+    ctx.fillText(p.nick + skillReady, p.x, p.y - (r+18));
+
+    if(ball.owner===i){ctx.fillStyle='#ffeb3c';ctx.beginPath();ctx.arc(p.x,p.y-(r+28),4,0,Math.PI*2);ctx.fill()}
+  }
+
+  ctx.fillStyle = performance.now() < ball.frozen ? '#8be9fd' : '#ff9119';
+  ctx.beginPath();ctx.arc(ball.x,ball.y,9,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#191919';ctx.lineWidth=2;ctx.stroke();
+  ctx.beginPath();ctx.moveTo(ball.x-5,ball.y-5);ctx.lineTo(ball.x+5,ball.y+5);ctx.stroke();
+
+  ctx.fillStyle='#191919';ctx.beginPath();ctx.roundRect((W/2)-220,12,440,65,12);ctx.fill();
+  ctx.fillStyle='white';ctx.font='bold 20px Arial';ctx.textAlign='center';
+  ctx.fillText(`AZUL ${score[0]} x ${score[1]} VERMELHO`,W/2,40);
+  ctx.fillStyle='#ffeb3c';ctx.font='bold 18px Arial';ctx.fillText(`Tempo: ${Math.ceil(remaining)}s`,W/2,64);
+
+  if(match){
+    for(let i=0;i<players.length;i++){
+      if(charge[i]>0){
+        let p=players[i];
+        ctx.fillStyle='#222';ctx.fillRect(p.x-40,p.y-70,80,10);
+        ctx.fillStyle=p.color;ctx.fillRect(p.x-40,p.y-70,80*(charge[i]/1000),10);
+        ctx.strokeStyle='white';ctx.strokeRect(p.x-40,p.y-70,80,10);
+      }
+    }
+  }
+
+  if(!match && document.getElementById('skill-menu').style.display !== 'flex'){
+    ctx.fillStyle='rgba(0,0,0,.6)';ctx.fillRect((W/2)-310,250,620,180);
+    ctx.fillStyle='white';ctx.font='bold 34px Arial';ctx.fillText(finished?msg:'FUTEBOL DE BONECOS',W/2,310);
+    ctx.font='bold 19px Arial';
+    ctx.fillText(isLocal || role==='host'?(connected?'Clique INICIAR / REINICIAR':'Aguardando...'):'Aguardando o anfitrião iniciar',W/2,350);
+    ctx.fillText('Partida de 60 segundos',W/2,385);
+  }
+
+  if(msg&&performance.now()<msgUntil){ctx.fillStyle='#ffeb3c';ctx.font='bold 34px Arial';ctx.fillText(msg,W/2,125)}
+}
+
+function loop(now){
+  let dt=Math.min((now-last)/1000,.04);last=now;
+  if(role==='host'||isLocal){
+    update(dt,now);
+    if(!isLocal&&role==='host'&&connections.length>0&&now-lastSend>33){
+      let snapshotData = snapshot();
+      connections.forEach(conn => {
+        if(conn.open) conn.send({type:'state', state: snapshotData});
+      });
+      lastSend=now;
+    }
+  }
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>
