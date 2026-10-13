@@ -246,10 +246,12 @@ function movePlayer(i,k,now,dt){
   if(d){dx/=d;dy/=d;p.dir=dx?Math.sign(dx):p.dir}
 
   if(p.goalie){
-    p.vx = dx * 4.5;
-    p.vy = 0;
-    p.x = Math.max(30, Math.min(p.team===0 ? 160 : W-30, p.x + p.vx*dt*60));
-    p.y = H/2;
+    // Goleiro pode andar para qualquer direção dentro da sua área
+    let speed = now < p.sprint ? 6.8 : 4.1;
+    p.vx = dx * speed;
+    p.vy = dy * speed;
+    p.x = Math.max(30, Math.min(p.team === 0 ? 180 : W - 30, p.x + p.vx * dt * 60));
+    p.y = Math.max(120, Math.min(H - 140, p.y + p.vy * dt * 60));
   } else {
     let speed=now<p.sprint?6.8:4.1;
     p.vx=dx*speed;p.vy=dy*speed;
@@ -298,7 +300,6 @@ function update(dt,now){
     ball.vx*=Math.pow(.988,dt*60);ball.vy*=Math.pow(.988,dt*60);
   }
 
-  // SEM RESTRIÇÃO: Passou da linha de fundo lateral, é GOL automático!
   if(ball.x <= 25){ score[1]++; resetAfterGoal(now); return; }
   if(ball.x >= W - 25){ score[0]++; resetAfterGoal(now); return; }
 
@@ -381,60 +382,3 @@ function draw(){
     ctx.fillStyle=performance.now()<p.dribble?p.color:'#ffffff';ctx.beginPath();ctx.arc(p.x,p.y,15,0,Math.PI*2);ctx.fill();
     ctx.strokeStyle=p.color;ctx.lineWidth=5;ctx.beginPath();
     ctx.moveTo(p.x-7,p.y+11);ctx.lineTo(p.x-12,p.y+22);
-    ctx.moveTo(p.x+7,p.y+11);ctx.lineTo(p.x+12,p.y+22);ctx.stroke();
-    ctx.fillStyle='#f0cda5';ctx.beginPath();ctx.arc(p.x,p.y-19,8,0,Math.PI*2);ctx.fill();
-    
-    ctx.fillStyle='white';ctx.font='bold 12px Arial';ctx.textAlign='center';
-    ctx.fillText(p.nick + (p.goalie ? ' (GOL)' : ''),p.x,p.y-32);
-
-    if(ball.owner===i){ctx.fillStyle='#ffeb3c';ctx.beginPath();ctx.arc(p.x,p.y-44,4,0,Math.PI*2);ctx.fill()}
-  }
-
-  ctx.fillStyle='#ff9119';ctx.beginPath();ctx.arc(ball.x,ball.y,9,0,Math.PI*2);ctx.fill();
-  ctx.strokeStyle='#191919';ctx.lineWidth=2;ctx.stroke();
-  ctx.beginPath();ctx.moveTo(ball.x-5,ball.y-5);ctx.lineTo(ball.x+5,ball.y+5);ctx.stroke();
-
-  ctx.fillStyle='#191919';ctx.beginPath();ctx.roundRect((W/2)-220,12,440,65,12);ctx.fill();
-  ctx.fillStyle='white';ctx.font='bold 20px Arial';ctx.textAlign='center';
-  ctx.fillText(`AZUL ${score[0]} x ${score[1]} VERMELHO`,W/2,40);
-  ctx.fillStyle='#ffeb3c';ctx.font='bold 18px Arial';ctx.fillText(`Tempo: ${Math.ceil(remaining)}s`,W/2,64);
-
-  if(match){
-    for(let i=0;i<players.length;i++){
-      if(charge[i]>0){
-        let p=players[i];
-        ctx.fillStyle='#222';ctx.fillRect(p.x-40,p.y-70,80,10);
-        ctx.fillStyle=p.color;ctx.fillRect(p.x-40,p.y-70,80*(charge[i]/1000),10);
-        ctx.strokeStyle='white';ctx.strokeRect(p.x-40,p.y-70,80,10);
-      }
-    }
-  }
-
-  if(!match){
-    ctx.fillStyle='rgba(0,0,0,.6)';ctx.fillRect((W/2)-310,250,620,180);
-    ctx.fillStyle='white';ctx.font='bold 34px Arial';ctx.fillText(finished?msg:'FUTEBOL DE BONECOS',W/2,310);
-    ctx.font='bold 19px Arial';
-    ctx.fillText(isLocal || role==='host'?(connected?'Clique INICIAR / REINICIAR':'Aguardando...'):'Aguardando o anfitrião iniciar',W/2,350);
-    ctx.fillText('Partida de 60 segundos',W/2,385);
-  }
-
-  if(msg&&performance.now()<msgUntil){ctx.fillStyle='#ffeb3c';ctx.font='bold 34px Arial';ctx.fillText(msg,W/2,125)}
-}
-
-function loop(now){
-  let dt=Math.min((now-last)/1000,.04);last=now;
-  if(role==='host'||isLocal){
-    update(dt,now);
-    if(!isLocal&&role==='host'&&connections.length>0&&now-lastSend>33){
-      let snapshotData = snapshot();
-      connections.forEach(conn => {
-        if(conn.open) conn.send({type:'state', state: snapshotData});
-      });
-      lastSend=now;
-    }
-  }
-  draw();
-  requestAnimationFrame(loop);
-}
-requestAnimationFrame(loop);
-</script></body></html>
